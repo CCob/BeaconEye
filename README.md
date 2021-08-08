@@ -1,0 +1,42 @@
+# BeaconEye
+
+## Introduction
+
+BeaconEye scans running processes for active CobaltStrike beacons.  When processes are found to be running beacon, BeaconEye will monitor each process for C2 activity.
+
+## How it works
+
+BeaconEye attaches itself as a debugger to each process and will begin monitoring beacon activity for C2 traffic (HTTP/HTTPS beacons supported currently).
+
+The AES keys used for encrypting C2 data and mallable profile are decoded on the fly, which enables BeaconEye to extract and decrypt beacon's output when commands are sent via the operator.
+
+A log folder is created per process relative to the current directory where BeaconEye is executed from.
+
+## Features
+
+* A per process log folder
+* Dumps beacon config
+* Displays output from most beacon commands
+* Saves screenshots
+
+## Caveats
+
+BeaconEye currently supports 64 bit 4.x HTTP/HTTPS beacons only.  At present, only command output is decoded and not command requests.  With `sleep_mask` and `userwx` set to true, BeaconEye cannot currently detect running beacons, all other combinations *"should"* be supported.  See TODO list below for a full list of intended features.
+
+BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacons that cannot be detected or where the malleable C2 profile has not been parsed correctly resulting in incorrect decoding of output.
+
+## TODO
+
+* Implement 32bit beacon monitoring
+* Add support for named pipe beacons
+* Add support for TCP beacons
+* Add support for CobaltStrike 3.x
+* Add command line argument for targeting specific process
+* Add command line argument to specify output logging location
+* Add support for extracting commands
+* Detect RWX beacons with sleep mask enabled
+
+## References and Thanks
+
+* BeaconEye's initial beacon process detection is heavily based on @Apr4h's [CobaltStrikeScan](https://github.com/Apr4h/CobaltStrikeScan)
+* James Forshaw's NtApiDotNet library, which makes process deubgging and interaction a breeze from C#
