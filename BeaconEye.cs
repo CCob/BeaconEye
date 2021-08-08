@@ -90,66 +90,90 @@ namespace BeaconEye {
             }
         }
 
-        static bool IsBeaconProcess(NtProcess process) {
+        static bool PossibleRXBeacon(NtProcess process, MemoryInformation block) {
+            
+            int minBeaconTextSize = 160 * 1024;
+            int maxBeaconTextSize = 180 * 1024;
 
+            if (block.Protect == MemoryAllocationProtect.ExecuteRead
+                        && block.RegionSize >= minBeaconTextSize
+                        && block.RegionSize <= maxBeaconTextSize) {
+
+                var dataMemory = process.QueryMemoryInformation(block.BaseAddress + block.RegionSize);
+
+                if (dataMemory.AllocationBase != block.AllocationBase && 
+                    (dataMemory.Protect == MemoryAllocationProtect.ReadWrite || dataMemory.Protect == MemoryAllocationProtect.ReadOnly)) {
+                    return false;
+                } else {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static bool PossibleRWXBeacon(MemoryInformation block) {
+            return block.Protect == MemoryAllocationProtect.ExecuteReadWrite;
+        }
+
+        static bool IsBeaconProcess(NtProcess process) {
+            
             try {
                 var memoryInfo = process.QueryAllMemoryInformation();
                 MemoryInformation lastBlock = null;
-                Configuration beaconConfig = ProcessHasConfig(process);
+                Configuration config = ProcessHasConfig(process);
+                
+                foreach (var blockInfo in memoryInfo) {
 
-                if (beaconConfig != null) {
+                    if (PossibleRXBeacon(process, blockInfo) || PossibleRWXBeacon(blockInfo)) {
+      
+                        var codeBlock = process.ReadMemory(blockInfo.BaseAddress, (int)blockInfo.RegionSize);
+                        var offsets = IndexOfSequence(codeBlock, new byte[] { 0x0F, 0x10, 0x05 }, 0);
+                        bool doneSearching = false;
 
-                    foreach (var blockInfo in memoryInfo) {
+                        foreach (var offset in offsets) {
 
-                        if (blockInfo.Protect == MemoryAllocationProtect.ExecuteRead || blockInfo.Protect == MemoryAllocationProtect.ExecuteReadWrite || blockInfo.Protect == MemoryAllocationProtect.ExecuteWriteCopy) ) {
+                            try {
+                                Configuration beaconConfig;
+                                byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + offset, 15);
+                                SharpDisasm.Disassembler disasm = new SharpDisasm.Disassembler(instructions, SharpDisasm.ArchitectureMode.x86_64, (ulong)blockInfo.BaseAddress + (ulong)offset);
 
-                            var codeBlock = process.ReadMemory(blockInfo.BaseAddress, (int)blockInfo.RegionSize);
-                            var offsets = IndexOfSequence(codeBlock, new byte[] { 0x0F, 0x10, 0x05 }, 0);
-                            bool doneSearching = false;
+                                var movupsIns = disasm.NextInstruction();
+                                var movdquIns = disasm.NextInstruction();
 
-                            foreach (var offset in offsets) {
-
-                                try {    
-                                    byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + offset, 15);
-                                    SharpDisasm.Disassembler disasm = new SharpDisasm.Disassembler(instructions, SharpDisasm.ArchitectureMode.x86_64, (ulong)blockInfo.BaseAddress + (ulong)offset);
-
-                                    var movupsIns = disasm.NextInstruction();
-                                    var movdquIns = disasm.NextInstruction();
-
-                                    if (movdquIns.Mnemonic != SharpDisasm.Udis86.ud_mnemonic_code.UD_Imovdqu ||
-                                        movdquIns.Operands[0].Base != SharpDisasm.Udis86.ud_type.UD_R_RIP ||
-                                        movupsIns.Operands[0].Base != movdquIns.Operands[1].Base) {
-                                        continue;
-                                    } else {                                        
+                                if( movdquIns.Mnemonic != SharpDisasm.Udis86.ud_mnemonic_code.UD_Imovdqu ||
+                                    movdquIns.Operands[0].Base != SharpDisasm.Udis86.ud_type.UD_R_RIP ||
+                                    movupsIns.Operands[0].Base != movdquIns.Operands[1].Base) {
+                                    continue;                                 
+                                } else {
+                                    if ((beaconConfig = ProcessHasConfig(process)) == null) {
                                         doneSearching = true;
-                                        break;                                       
-                                    }
-
-                                    var iv_address = (long)movupsIns.PC + movupsIns.Operands[1].LvalSDWord;
-                                    var keys_address = (long)movdquIns.PC + movdquIns.Operands[0].LvalSDWord - 32;
-                                    var beaconProcess = new BeaconProcess(process, beaconConfig, iv_address, keys_address, ref finishedEvent);
-                                    var beaconMonitorThread = new Thread(MonitorThread);
-
-                                    beaconMonitorThreads.Add(beaconMonitorThread);
-                                    beaconMonitorThread.Start(beaconProcess);
-                                    return true;
-
-                                } catch (Exception e) {
-                                    Console.WriteLine(e.Message);
+                                        break;
+                                    }                                    
                                 }
-                            }
 
-                            if (doneSearching) {
-                                break;
+                                var iv_address = (long)movupsIns.PC + movupsIns.Operands[1].LvalSDWord;
+                                var keys_address = (long)movdquIns.PC + movdquIns.Operands[0].LvalSDWord - 32;
+
+                                var beaconProcess = new BeaconProcess(process, beaconConfig, iv_address, keys_address, ref finishedEvent);
+                                var beaconMonitorThread = new Thread(MonitorThread);
+                                beaconMonitorThreads.Add(beaconMonitorThread);
+                                beaconMonitorThread.Start(beaconProcess);
+                                return true;
+                               
+                            } catch (Exception e) {                                
                             }
                         }
 
-                        lastBlock = blockInfo;
+                        if (doneSearching) {
+                            break;
+                        }
                     }
-                }            
 
+                    lastBlock = blockInfo;
+                }
             } catch (Exception e) {
-                Console.WriteLine($"[!] Failed to scan process {process.Name} ({process.ProcessId}) with error {e.Message}");
+                Console.WriteLine($"[!] Failed to scan process {process.Name} ({process.ProcessId})");
             }
 
             return false;
