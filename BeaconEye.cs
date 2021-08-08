@@ -54,11 +54,10 @@ namespace BeaconEye {
 
         static Configuration ProcessHasConfig(NtProcess process) {
 
-            IntPtr processHeap = process.GetPeb().GetProcessHeap();
-            var memoryInfo = process.QueryMemoryInformation(processHeap.ToInt64());
-           
             try {
 
+                IntPtr processHeap = process.GetPeb().GetProcessHeap();
+                var memoryInfo = process.QueryMemoryInformation(processHeap.ToInt64());
                 var memory = process.ReadMemory(memoryInfo.BaseAddress, (int)memoryInfo.RegionSize);
  
                 using(var ctx = new YaraContext()) {
@@ -77,8 +76,8 @@ namespace BeaconEye {
                     }
                 }
                  
-            } catch (Exception) {
-
+            } catch (Exception e) {
+           
             }     
                         
             return null;
@@ -186,14 +185,19 @@ namespace BeaconEye {
             var processes = NtProcess.GetProcesses(ProcessAccessRights.AllAccess);
             var originalColor = Console.ForegroundColor;
             foreach (var process in processes) {
-                
-                if (IsBeaconProcess(process)) {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"\t{process.Name} ({process.ProcessId})");
+
+                if (process.Is64Bit) {
+                    if (IsBeaconProcess(process)) {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"\t{process.Name} ({process.ProcessId})");
+                    } else {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"\t{process.Name} ({process.ProcessId})");
+                    }
                 } else {
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"\t{process.Name} ({process.ProcessId})");
-                }          
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"\tSkipped 32bit process {process.Name} ({process.ProcessId})");
+                }
             }
             Console.ForegroundColor = originalColor;
                         
