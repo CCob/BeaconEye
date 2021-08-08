@@ -4,6 +4,8 @@
 
 BeaconEye scans running processes for active CobaltStrike beacons.  When processes are found to be running beacon, BeaconEye will monitor each process for C2 activity.
 
+![BeaconEye](BeaconEye.png)
+
 ## How it works
 
 BeaconEye attaches itself as a debugger to each process and will begin monitoring beacon activity for C2 traffic (HTTP/HTTPS beacons supported currently).
