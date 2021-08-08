@@ -149,9 +149,18 @@ namespace BeaconEye {
         }
 
         void SaveScreenshot(BinaryReader br) {
-            var jpgLen = br.ReadInt32();
-            var jpgData = br.ReadBytes(jpgLen);
-            File.WriteAllBytes(Path.Combine(folderName, $"{DateTime.Now.ToString("yyyyMMddHHmmss")}_Screenshot.jpg"), jpgData);                       
+            var jpgLen = br.ReadUInt32();
+            var fileName = Path.Combine(folderName, $"{DateTime.Now.ToString("yyyyMMddHHmmss")}_Screenshot.jpg");
+
+            //older beacons contain just the JPG data, newer versions contain other stuff too
+            if (jpgLen != 0xE0FFD8FF) {
+                var jpgData = br.ReadBytes((int)jpgLen);
+                File.WriteAllBytes(fileName, jpgData);
+            } else {
+                var jpgData = br.ReadBytes((int)(br.BaseStream.Length - br.BaseStream.Position));
+                jpgData = new byte[4] { 0xFF, 0xD8, 0xFF, 0xE0 }.Concat(jpgData).ToArray();
+                File.WriteAllBytes(fileName, jpgData);
+            }
         }
 
         void DecryptCallback(byte[] body, byte[] key) {
