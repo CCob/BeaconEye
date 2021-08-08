@@ -25,7 +25,7 @@ A log folder is created per process relative to the current directory where Beac
 
 ## Caveats
 
-BeaconEye currently supports 64 bit 4.x HTTP/HTTPS beacons only.  Atask` a present, only command output is decoded and not command requests. See TODO list below for a full list of intended features.
+BeaconEye currently supports 64 bit 4.x HTTP/HTTPS beacons only.  At present, only command output is decoded and not command requests. See TODO list below for a full list of intended features.
 
 BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacons that cannot be detected or where the malleable C2 profile has not been parsed correctly resulting in incorrect decoding of output.
 
@@ -37,7 +37,7 @@ BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacon
 * Add support for CobaltStrike 3.x
 * Add command line argument for targeting specific process
 * Add command line argument to specify output logging location
-* Add support for extracting commands
+* Add support for extracting operator commands
 
 ## References and Thanks
 
