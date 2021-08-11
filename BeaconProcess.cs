@@ -73,7 +73,7 @@ namespace BeaconEye {
 
             LogMessage("Configuration:");
             foreach (var config in beaconConfig.Items) {
-                logFile.WriteLine($"\tValue {config.Key} {config.Value}: {config.Value}");
+                logFile.WriteLine($"\tValue {config.Value}");
             }
 
             logFile.Flush();
@@ -84,7 +84,7 @@ namespace BeaconEye {
             var oldProtect = Process.ProtectMemory(address, 1, MemoryAllocationProtect.ExecuteReadWrite);
             Process.WriteMemory(address, new byte[] { 0xCC });
             Process.ProtectMemory(address, 1, oldProtect);
-            Process.FlushInstructionCache(address, 1);
+            Process.FlushInstructionCache(address, 16);
             return oldBPInst;
         }
 
@@ -92,7 +92,7 @@ namespace BeaconEye {
             var oldProtect = process.ProtectMemory(address, 1, MemoryAllocationProtect.ExecuteReadWrite);
             process.WriteMemory(address, oldInst);
             process.ProtectMemory(address, 1, oldProtect);
-            process.FlushInstructionCache(address, 1);
+            process.FlushInstructionCache(address, 16);
         }
 
         void LogMessage(string message) {
@@ -102,20 +102,41 @@ namespace BeaconEye {
 
         void EnableSingleStep(NtThread thread, long updateRip) {
 
-            var ctx = (ContextAmd64)thread.GetContext(ContextFlags.All);
+            var ctx = thread.GetContext(ContextFlags.All);
 
-            ctx.Dr0 = ctx.Dr6 = ctx.Dr7 = 0;
-            ctx.EFlags |= 0x100;
-            if (updateRip != 0)
-                ctx.Rip = (ulong)updateRip;
+            if (ctx is ContextAmd64 ctx64) {
+                
+                ctx64.Dr0 = ctx64.Dr6 = ctx64.Dr7 = 0;
+                ctx64.EFlags |= 0x100;
+                if (updateRip != 0)
+                    ctx64.Rip = (ulong)updateRip;
+
+            }else if(ctx is ContextX86 ctx32) {
+
+                ctx32.Dr0 = ctx32.Dr6 = ctx32.Dr7 = 0;
+                ctx32.EFlags |= 0x100;
+                if (updateRip != 0)
+                    ctx32.Eip = (uint)updateRip;
+            }
 
             thread.SetContext(ctx);
         }
 
         static void DisableSingleStep(NtThread thread) {
-            var ctx = (ContextAmd64)thread.GetContext(ContextFlags.DebugRegisters);
-            ctx.Dr0 = ctx.Dr6 = ctx.Dr7 = 0;
-            ctx.EFlags = 0;
+           
+            var ctx = thread.GetContext(ContextFlags.DebugRegisters);
+
+            if (ctx is ContextAmd64 ctx64) {
+
+                ctx64.Dr0 = ctx64.Dr6 = ctx64.Dr7 = 0;
+                ctx64.EFlags = 0;
+
+            } else if (ctx is ContextX86 ctx32) {
+
+                ctx32.Dr0 = ctx32.Dr6 = ctx32.Dr7 = 0;
+                ctx32.EFlags = 0;
+            }
+            
             thread.SetContext(ctx);
         }
 
@@ -182,7 +203,7 @@ namespace BeaconEye {
 
             switch (callbackId) {
                 case OutputTypes.CALLBACK_OUTPUT:
-                case OutputTypes.CALLBACK_OUTPUT_OEM:                
+                case OutputTypes.CALLBACK_OUTPUT_OEM:
                     output = Encoding.ASCII.GetString(br.ReadBytes(callbackDataLen));
                     break;
                 case OutputTypes.CALLBACK_OUTPUT_UTF8:
@@ -192,7 +213,7 @@ namespace BeaconEye {
                     break;
                 case OutputTypes.CALLBACK_PENDING:
                     var pendingRequest = IPAddress.NetworkToHostOrder(br.ReadInt32());
-                    output = Encoding.ASCII.GetString(br.ReadBytes(callbackDataLen-4));
+                    output = Encoding.ASCII.GetString(br.ReadBytes(callbackDataLen - 4));
                     break;
                 case OutputTypes.CALLBACK_SCREENSHOT:
                     SaveScreenshot(br);
@@ -200,6 +221,34 @@ namespace BeaconEye {
             }
 
             LogMessage($"Callback {sequenceNumber} sent with type {callbackId}\n{output}");
+        }
+        
+        long ReadArg(IContext ctx, int argNum) {
+
+            if(ctx is ContextAmd64 ctx64) {
+
+                switch (argNum) {
+                    case 0:
+                        return (long)ctx64.Rcx;
+                    case 1:
+                        return (long)ctx64.Rdx;
+                    case 2:
+                        return (long)ctx64.R8;
+                    case 3:
+                        return (long)ctx64.R9;
+                    default:
+                        long parameterAddress = (long)ctx64.Rsp + 0x28 + ((argNum - 4) * 8);
+                        return Process.ReadMemory<long>(parameterAddress);
+                }
+
+            } else if(ctx is ContextX86 ctx32) {
+
+                long parameterAddress = ctx32.Esp + 4 + (argNum * 4);
+                return Process.ReadMemory<uint>(parameterAddress);
+
+            } else {
+                throw new NotImplementedException("Only x86 or AMD64 processes supported");
+            }
         }
 
         public void MonitorTraffic() {
@@ -211,6 +260,7 @@ namespace BeaconEye {
             byte[] oldBPInst = null;
             byte[] keys = null;
             long httpSendRequestAddress = 0;
+            int singleStepThreadId = 0;
 
             while (debugging) {
 
@@ -218,9 +268,16 @@ namespace BeaconEye {
                 DebugEvent debugEvent = debugObject.WaitForDebugEvent(100);
 
                 if (debugEvent is UnknownDebugEvent && finishedEvent.WaitOne(400)) {
-                    
-                    if (httpSendRequestAddress != 0 && oldBPInst != null)
+
+                    if (httpSendRequestAddress != 0 && oldBPInst != null) {
                         DisableBreakpoint(Process, httpSendRequestAddress, oldBPInst);
+                    }
+
+                    if (singleStepThreadId != 0) {
+                        using (var requestThread = NtThread.Open(singleStepThreadId, ThreadAccessRights.MaximumAllowed)) {
+                            DisableSingleStep(requestThread);
+                        }
+                    }
 
                     debugging = false;
                     continue;
@@ -255,28 +312,29 @@ namespace BeaconEye {
                         DisableBreakpoint(Process, httpSendRequestAddress, oldBPInst);
                         using (var requestThread = NtThread.Open(debugEvent.ThreadId, ThreadAccessRights.GetContext | ThreadAccessRights.SetContext)) {
 
-                            var ctx = (ContextAmd64)requestThread.GetContext(ContextFlags.All);
-                            string httpHeaders = Encoding.ASCII.GetString(Process.ReadMemory((long)ctx.Rdx, (int)ctx.R8));
+                            var ctx = requestThread.GetContext(ContextFlags.All);
+                            string httpHeaders = Encoding.ASCII.GetString(Process.ReadMemory(ReadArg(ctx,1), (int)ReadArg(ctx,2)));
                             byte[] body = null;
-                            var body_len = BitConverter.ToUInt32(Process.ReadMemory((long)ctx.Rsp + 0x28, 4), 0);
+                            var body_len = ReadArg(ctx, 4);
+                            long body_ptr;
 
-                            if (body_len > 0 && ctx.R9 != 0) {
-                                body =Process.ReadMemory((long)ctx.R9, (int)body_len);
+                            if (body_len > 0 && (body_ptr = ReadArg(ctx, 3)) != 0) {
+                                body = Process.ReadMemory(body_ptr, (int)body_len);
                             }
-
-                            //LogMessage($"HTTP Request:\n{httpHeaders}");
 
                             if (body != null) {
                                 DecryptCallback(body, keys.Take(16).ToArray());
                             }
 
                             EnableSingleStep(requestThread, httpSendRequestAddress);
+                            singleStepThreadId = debugEvent.ThreadId;
                         }
 
                     } else if (exceptionDebugEvent.Code == NtStatus.STATUS_SINGLE_STEP) {
 
                         using (var requestThread = NtThread.Open(debugEvent.ThreadId, ThreadAccessRights.MaximumAllowed)) {
                             DisableSingleStep(requestThread);
+                            singleStepThreadId = 0;
                         }
 
                         EnableBreakpoint(httpSendRequestAddress);

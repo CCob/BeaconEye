@@ -11,22 +11,22 @@ namespace BeaconEye {
 
     public enum Action : int {
         NONE,
-        APPEND,
-        PREPEND,
-        BASE64,
-        PRINT,
-        PARAMETER,
-        HEADER,
+        append,
+        prepend,
+        base64,
+        print,
+        parameter,
+        header,
         BUILD,
-        NETBIOS,
+        netbios,
         _PARAMETER,
         _HEADER,
-        NETBIOSU,
-        URI_APPEND,
-        BASE64URL,
-        STRREP,
-        MASK,
-        HOSTHEADER,
+        netbiosu,
+        uri_append,
+        base64url,
+        strrep,
+        mask,
+        hostheader,
     }
 
     public class Statement {
@@ -40,7 +40,15 @@ namespace BeaconEye {
         public byte[] Argument { get; set; }
 
         public override string ToString() {
-            return $"{Action}: {Encoding.ASCII.GetString(Argument)}";
+
+            string action = Action.ToString();
+            if(Action == Action._HEADER) {
+                action = "header";
+            }else if(Action == Action._PARAMETER) {
+                action = "parameter";
+            }
+
+            return $"{action} {Encoding.ASCII.GetString(Argument)};";
         }
     }
 
@@ -87,7 +95,7 @@ namespace BeaconEye {
                             decode = true;
                         }
                         break;
-                    case Action.PRINT:
+                    case Action.print:
                         if (decode) {
                             done = true;
                             outputStatements.Reverse();
@@ -106,25 +114,25 @@ namespace BeaconEye {
 
             foreach(var statement in outputStatements) {
                 switch (statement.Action) {
-                    case Action.BASE64URL:
+                    case Action.base64url:
                         decoded = Convert.FromBase64String(Uri.UnescapeDataString(Encoding.ASCII.GetString(decoded)));
                         break;
-                    case Action.BASE64:
+                    case Action.base64:
                         decoded = Convert.FromBase64String(Encoding.ASCII.GetString(decoded));
                         break;
-                    case Action.PREPEND:
+                    case Action.prepend:
                         decoded = decoded.Skip(statement.Argument.Length).ToArray();
                         break;
-                    case Action.APPEND:
+                    case Action.append:
                         decoded = decoded.Take(decoded.Length - statement.Argument.Length).ToArray();
                         break;
-                    case Action.NETBIOSU:
+                    case Action.netbiosu:
                         decoded = NetBIOSDecode(decoded, true);
                         break;
-                    case Action.NETBIOS:
+                    case Action.netbios:
                         decoded = NetBIOSDecode(decoded, false);
                         break;
-                    case Action.MASK:
+                    case Action.mask:
                         decoded = MaskDecode(decoded);
                         break;
                     default:
@@ -150,15 +158,15 @@ namespace BeaconEye {
                         done = true;
                         break;
                     
-                    case Action.APPEND:
-                    case Action.PREPEND:
+                    case Action.append:
+                    case Action.prepend:
                     case Action._HEADER:
-                    case Action.HEADER:
+                    case Action.header:
                     case Action._PARAMETER:
-                    case Action.PARAMETER:
-                    case Action.HOSTHEADER:
-                    case Action.URI_APPEND:
-                    case Action.BASE64URL:
+                    case Action.parameter:
+                    case Action.hostheader:
+                    case Action.uri_append:
+                    case Action.base64url:
                         int actionParamLen = IPAddress.NetworkToHostOrder(process.ReadMemory<int>(address));
                         address += 4;
                         actionParameter = process.ReadMemory(address, actionParamLen);
@@ -170,12 +178,12 @@ namespace BeaconEye {
                         address += 4;
                         break;
 
-                    case Action.BASE64:
-                    case Action.PRINT:                   
-                    case Action.NETBIOS:                   
-                    case Action.NETBIOSU:                                                             
-                    case Action.STRREP:
-                    case Action.MASK:
+                    case Action.base64:
+                    case Action.print:                   
+                    case Action.netbios:                   
+                    case Action.netbiosu:                                                             
+                    case Action.strrep:
+                    case Action.mask:
                         break;                                        
                 }
 

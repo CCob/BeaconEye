@@ -1,7 +1,9 @@
 ﻿using BeaconEye.Config;
 using libyaraNET;
+using Mono.Options;
 using NtApiDotNet;
 using NtApiDotNet.Win32;
+using SharpDisasm;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,7 +17,25 @@ using System.Threading.Tasks;
 namespace BeaconEye {
     class BeaconEye {
 
-        public static string cobaltStrikeRule = "rule CobaltStrike { " +
+        enum ScanState{
+            NotFound,
+            Found,
+            FoundNoKeys,
+            HeapEnumFailed                
+        }
+
+        class FetchHeapsException : Exception {
+
+        }
+
+        class ScanResult {
+            public ScanState State { get; set; }
+            public long ConfigAddress { get; set; }
+            public bool CrossArch { get; set; }
+            public Configuration Configuration { get; set; }
+        }
+        
+        public static string cobaltStrikeRule64 = "rule CobaltStrike { " +
                 "strings:  " +
                     "$sdec = { " +
                         " 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 " +
@@ -29,12 +49,26 @@ namespace BeaconEye {
                     "any of them" +
             "}";
 
+        public static string cobaltStrikeRule32 = "rule CobaltStrike { " +
+                "strings:  " +
+                    "$sdec = { " +
+                        " 00 00 00 00 00 00 00 00 " +
+                        " 01 00 00 00 (00|01|02|04|08|10) 00 00 00" +
+                        " 01 00 00 00 ?? ?? 00 00 " +
+                        " 02 00 00 00 ?? ?? ?? ?? " +
+                        " 02 00 00 00 ?? ?? ?? ?? " +
+                        " 01 00 00 00 ?? ?? 00 00 " +
+                        "} " +
+                "condition: " +
+                    "any of them" +
+            "}";
+
         static ManualResetEvent finishedEvent = new ManualResetEvent(false);
         static List<Thread> beaconMonitorThreads = new List<Thread>();
         
-        static Rules CompileRules() {
+        static Rules CompileRules(bool x64) {
             using (Compiler compiler = new Compiler()) {   
-                compiler.AddRuleString(cobaltStrikeRule);
+                compiler.AddRuleString(x64 ? cobaltStrikeRule64 : cobaltStrikeRule32);
                 return compiler.GetRules();
             }
         }
@@ -52,34 +86,65 @@ namespace BeaconEye {
             return positions;
         }
 
-        static Configuration ProcessHasConfig(NtProcess process) {
+        static long ReadPointer(NtProcess process, long address) {
+            if (process.Is64Bit) {
+                return process.ReadMemory<long>(address);
+            } else {
+                return process.ReadMemory<int>(address);
+            }
+        }
+
+        static List<long> GetHeaps(NtProcess process) {
 
             try {
+                int numHeaps;
+                long heapArray;
 
-                IntPtr processHeap = process.GetPeb().GetProcessHeap();
-                var memoryInfo = process.QueryMemoryInformation(processHeap.ToInt64());
-                var memory = process.ReadMemory(memoryInfo.BaseAddress, (int)memoryInfo.RegionSize);
- 
-                using(var ctx = new YaraContext()) {
-                    var rules = CompileRules();
+                if (process.Is64Bit) {
+                    numHeaps = process.ReadMemory<int>((long)process.PebAddress + 0xE8);
+                    heapArray = ReadPointer(process, (long)process.PebAddress + 0xF0);
+                } else {
+                    numHeaps = process.ReadMemory<int>((int)process.PebAddress32 + 0x88);
+                    heapArray = ReadPointer(process, (long)process.PebAddress32 + 0x90);
+                }
 
-                    Scanner scanner = new Scanner();
+                var heaps = new List<long>();
+                for (int idx = 0; idx < numHeaps; ++idx) {
+                    var heap = ReadPointer(process, heapArray + (idx * (process.Is64Bit ? 8 : 4)));
+                    heaps.Add(heap);
+                }
+
+                return heaps;
+
+            } catch (Exception) {
+                throw new FetchHeapsException();
+            }
+        }
+
+        static Configuration ProcessHasConfig(NtProcess process) {
+                    
+            var heaps = GetHeaps(process);
+
+            using (var ctx = new YaraContext()) {
+                var rules = CompileRules(process.Is64Bit);
+                Scanner scanner = new Scanner();
+
+                foreach (var heap in heaps) {
+                      
+                    var memoryInfo = process.QueryMemoryInformation(heap);
+                    var memory = process.ReadMemory(memoryInfo.BaseAddress, (int)memoryInfo.RegionSize);
                     var results = scanner.ScanMemory(memory, rules);
 
                     if (results.Count > 0) {
-
                         foreach (KeyValuePair<string, List<Match>> item in results[0].Matches) {
                             var configStart = memoryInfo.BaseAddress + (long)item.Value[0].Offset;
-                            var configBytes = process.ReadMemory(configStart, 0x800);
-                            return new Configuration(new BinaryReader(new MemoryStream(configBytes)), process);                                
-                        }                           
+                            var configBytes = process.ReadMemory(configStart, process.Is64Bit ? 0x800 : 0x400);
+                            return new Configuration(configStart, new BinaryReader(new MemoryStream(configBytes)), process);
+                        }
                     }
-                }
-                 
-            } catch (Exception e) {
-           
-            }     
-                        
+                }                
+            }               
+                            
             return null;
         }
 
@@ -89,127 +154,214 @@ namespace BeaconEye {
             }
         }
 
-        static bool PossibleRXBeacon(NtProcess process, MemoryInformation block) {
-            
-            int minBeaconTextSize = 160 * 1024;
-            int maxBeaconTextSize = 180 * 1024;
+        static Tuple<long,long> GetKeyIVAddress(MemoryInformation blockInfo, NtProcess process) {
 
-            if (block.Protect == MemoryAllocationProtect.ExecuteRead
-                        && block.RegionSize >= minBeaconTextSize
-                        && block.RegionSize <= maxBeaconTextSize) {
+            if (process.Is64Bit) {
 
-                var dataMemory = process.QueryMemoryInformation(block.BaseAddress + block.RegionSize);
+                var codeBlock = process.ReadMemory(blockInfo.BaseAddress, (int)blockInfo.RegionSize);
+                var offsets = IndexOfSequence(codeBlock, new byte[] { 0x0F, 0x10, 0x05 }, 0);
 
-                if (dataMemory.AllocationBase != block.AllocationBase && 
-                    (dataMemory.Protect == MemoryAllocationProtect.ReadWrite || dataMemory.Protect == MemoryAllocationProtect.ReadOnly)) {
-                    return false;
-                } else {
-                    return true;
+                foreach (var offset in offsets) {
+
+                    byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + offset, 15);
+                    Disassembler disasm = new Disassembler(instructions, ArchitectureMode.x86_64, (ulong)blockInfo.BaseAddress + (ulong)offset);
+
+                    var movupsIns = disasm.NextInstruction();
+                    var movdquIns = disasm.NextInstruction();
+
+                    if (movdquIns.Mnemonic != SharpDisasm.Udis86.ud_mnemonic_code.UD_Imovdqu ||
+                        movdquIns.Operands[0].Base != SharpDisasm.Udis86.ud_type.UD_R_RIP ||
+                        movupsIns.Operands[0].Base != movdquIns.Operands[1].Base) {
+                        return null;
+                    } else {
+
+                        var iv_address = (long)movupsIns.PC + movupsIns.Operands[1].LvalSDWord;
+                        var keys_address = (long)movdquIns.PC + movdquIns.Operands[0].LvalSDWord - 32;
+
+                        return new Tuple<long, long>(keys_address, iv_address);
+                    }
                 }
-            }
 
-            return false;
-        }
+            } else {
 
-        static bool PossibleRWXBeacon(MemoryInformation block) {
-            return block.Protect == MemoryAllocationProtect.ExecuteReadWrite;
-        }
+                var codeBlock = process.ReadMemory(blockInfo.BaseAddress, (int)blockInfo.RegionSize);
+                var offsets = IndexOfSequence(codeBlock, new byte[] { 0xa5, 0xa5, 0xa5, 0xa5, 0xe8 }, 0);
 
-        static bool IsBeaconProcess(NtProcess process) {
-            
-            try {
-                var memoryInfo = process.QueryAllMemoryInformation();
-                MemoryInformation lastBlock = null;
-                Configuration config = ProcessHasConfig(process);
-                
-                foreach (var blockInfo in memoryInfo) {
+                foreach (var offset in offsets) {
 
-                    if (PossibleRXBeacon(process, blockInfo) || PossibleRWXBeacon(blockInfo)) {
-      
-                        var codeBlock = process.ReadMemory(blockInfo.BaseAddress, (int)blockInfo.RegionSize);
-                        var offsets = IndexOfSequence(codeBlock, new byte[] { 0x0F, 0x10, 0x05 }, 0);
-                        bool doneSearching = false;
+                    byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + offset - 5, 24);
+                    Disassembler disasm = new Disassembler(instructions, ArchitectureMode.x86_32, (ulong)blockInfo.BaseAddress + (ulong)offset);
 
-                        foreach (var offset in offsets) {
+                    var movEDIMem = disasm.NextInstruction();
 
-                            try {
-                                Configuration beaconConfig;
-                                byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + offset, 15);
-                                SharpDisasm.Disassembler disasm = new SharpDisasm.Disassembler(instructions, SharpDisasm.ArchitectureMode.x86_64, (ulong)blockInfo.BaseAddress + (ulong)offset);
+                    if(movEDIMem.Mnemonic != SharpDisasm.Udis86.ud_mnemonic_code.UD_Imov || 
+                        movEDIMem.Operands[0].Base != SharpDisasm.Udis86.ud_type.UD_R_EDI ||
+                        movEDIMem.Operands[1].Base != SharpDisasm.Udis86.ud_type.UD_NONE
+                        ) {
+                        continue;
+                    }
+                  
+                    var iv_address = movEDIMem.Operands[1].LvalUDWord;
+                    long key_address = 0;
 
-                                var movupsIns = disasm.NextInstruction();
-                                var movdquIns = disasm.NextInstruction();
+                    for(int idx = offset; idx > offset - 50; idx--) {
 
-                                if( movdquIns.Mnemonic != SharpDisasm.Udis86.ud_mnemonic_code.UD_Imovdqu ||
-                                    movdquIns.Operands[0].Base != SharpDisasm.Udis86.ud_type.UD_R_RIP ||
-                                    movupsIns.Operands[0].Base != movdquIns.Operands[1].Base) {
-                                    continue;                                 
-                                } else {
-                                    if ((beaconConfig = ProcessHasConfig(process)) == null) {
-                                        doneSearching = true;
-                                        break;
-                                    }                                    
-                                }
+                        var keysOffsets = IndexOfSequence(codeBlock, new byte[] { 0x53, 0x56, 0x57, 0xbb }, idx);
 
-                                var iv_address = (long)movupsIns.PC + movupsIns.Operands[1].LvalSDWord;
-                                var keys_address = (long)movdquIns.PC + movdquIns.Operands[0].LvalSDWord - 32;
+                        if(keysOffsets.Count > 0 && keysOffsets[0] < offset) {
 
-                                var beaconProcess = new BeaconProcess(process, beaconConfig, iv_address, keys_address, ref finishedEvent);
-                                var beaconMonitorThread = new Thread(MonitorThread);
-                                beaconMonitorThreads.Add(beaconMonitorThread);
-                                beaconMonitorThread.Start(beaconProcess);
-                                return true;
-                               
-                            } catch (Exception e) {                                
-                            }
-                        }
+                            instructions = codeBlock.Skip(idx+3).Take(8).ToArray();
+                            disasm = new Disassembler(instructions, ArchitectureMode.x86_32, (ulong)blockInfo.BaseAddress + (ulong)idx+3);
 
-                        if (doneSearching) {
+                            var movEBX = disasm.NextInstruction();
+                            key_address = movEBX.Operands[1].LvalUDWord;
                             break;
                         }
                     }
 
-                    lastBlock = blockInfo;
+                    if (key_address != 0)
+                        return new Tuple<long, long>(key_address, iv_address);
                 }
-            } catch (Exception e) {
-                Console.WriteLine($"[!] Failed to scan process {process.Name} ({process.ProcessId})");
             }
 
-            return false;
+            return null;
+        }
+
+        static ScanResult IsBeaconProcess(NtProcess process, bool monitor) {
+            
+            try {
+
+                var beaconConfig = ProcessHasConfig(process);
+                if (beaconConfig == null) {
+                    return new ScanResult();
+                }
+
+                var memoryInfo = process.QueryAllMemoryInformation();
+
+                foreach (var blockInfo in memoryInfo) {
+
+                    if(blockInfo.Protect != MemoryAllocationProtect.ExecuteRead && blockInfo.Protect != MemoryAllocationProtect.ExecuteReadWrite) {
+                        continue;
+                    }
+
+                    BeaconProcess beaconProcess = null;                                   
+                    Tuple<long, long> keyIV;
+                    if((keyIV = GetKeyIVAddress(blockInfo, process)) == null) {
+                        continue;                  
+                    }
+
+                    bool crossArch = true;
+
+                    if (process.Is64Bit == NtProcess.Current.Is64Bit) {
+                        if (monitor) {
+                            beaconProcess = new BeaconProcess(process, beaconConfig, keyIV.Item2, keyIV.Item1, ref finishedEvent);
+                            var beaconMonitorThread = new Thread(MonitorThread);
+                            beaconMonitorThreads.Add(beaconMonitorThread);
+                            beaconMonitorThread.Start(beaconProcess);
+                        }                  
+                        crossArch = false;
+                    }
+
+                    return new ScanResult() {
+                        State = ScanState.Found,
+                        ConfigAddress = beaconConfig.Address,
+                        CrossArch = crossArch,
+                        Configuration = beaconConfig
+                    };                                                                                                                                                                                            
+                }
+
+                return new ScanResult() {
+                    State = ScanState.FoundNoKeys,
+                    ConfigAddress = beaconConfig.Address,
+                    Configuration = beaconConfig
+                };
+
+            } catch (FetchHeapsException e) {
+                return new ScanResult() {
+                    State = ScanState.HeapEnumFailed
+                };                
+            }                
         }
 
         static void Main(string[] args) {
-            
-            Console.WriteLine($"[+] Scanning for beacon processess...");
 
-            var processes = NtProcess.GetProcesses(ProcessAccessRights.AllAccess);
+            bool monitor = false;
+            string processFilter = null;
+            bool showHelp = false;
+            bool verbose = false;
+
+            Console.WriteLine(
+                    "BeconEye by @_EthicalChaos_\n" +
+                    $"  CobaltStrike beacon hunter and command monitoring tool { (IntPtr.Size == 8 ? "x86_64" : "x86")} \n"
+                   );
+
+            OptionSet option_set = new OptionSet()
+                .Add("v|verbose", "Attach to and monitor beacons found", v => verbose = true)
+                .Add("m|monitor", "Attach to and monitor beacons found", v => monitor = true)
+                .Add("p=|process=", "Filter process list wih names starting with x", v => processFilter = v)
+                .Add("h|help", "Display this help", v => showHelp = v != null);
+
+            try {
+
+                option_set.Parse(args);
+
+                if (showHelp) {
+                    option_set.WriteOptionDescriptions(Console.Out);
+                    return;
+                }
+
+            } catch (Exception e) {
+                Console.WriteLine("[!] Failed to parse arguments: {0}", e.Message);
+                option_set.WriteOptionDescriptions(Console.Out);
+                return;
+            }
+
+            Console.WriteLine($"[+] Scanning for beacon processess...");
+            if(processFilter != null) {
+                Console.WriteLine($"[=] Using process filter {processFilter}*");
+            }
+
+            var processes = NtProcess.GetProcesses(ProcessAccessRights.AllAccess)
+                .Where(p => processFilter != null ? p.Name.ToLower().StartsWith(processFilter.ToLower()) : true);
+
             var originalColor = Console.ForegroundColor;
+            var beaconsFound = 0;
+            
             foreach (var process in processes) {
 
-                if (process.Is64Bit) {
-                    if (IsBeaconProcess(process)) {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"\t{process.Name} ({process.ProcessId})");
-                    } else {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"\t{process.Name} ({process.ProcessId})");
-                    }
-                } else {
+                if (process.ExitNtStatus != NtStatus.STATUS_PENDING)
+                    continue;
+
+                ScanResult sr;
+
+                if ((sr = IsBeaconProcess(process, monitor)).State == ScanState.Found || sr.State == ScanState.FoundNoKeys) {
+                    beaconsFound++;
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"  {process.Name} ({process.ProcessId}), Keys Found:{sr.State == ScanState.Found}, Configuration Address: 0x{sr.ConfigAddress} {(sr.CrossArch ? $"(Please use the {(process.Is64Bit ? "x64" : "x86")} version of BeaconEye to monitor)" : "")}");
+                    sr.Configuration.PrintConfiguration(Console.Out, 1);
+                } else if(sr.State == ScanState.NotFound && verbose) {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"  {process.Name} ({process.ProcessId})");
+                } else if(sr.State == ScanState.HeapEnumFailed) {
                     Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"\tSkipped 32bit process {process.Name} ({process.ProcessId})");
-                }
+                    Console.WriteLine($"  {process.Name} ({process.ProcessId}) Failed to fetch heap info");
+                }    
             }
             Console.ForegroundColor = originalColor;
                         
-            if(beaconMonitorThreads.Count > 0) {
+            if(beaconsFound > 0) {
 
-                Console.WriteLine($"[+] Monitoring {beaconMonitorThreads.Count} beacon processes, press enter to stop monitoring");
-                Console.ReadLine();
-                Console.WriteLine($"[+] Exit triggered, detaching from beacon processes...");
+                Console.WriteLine($"[+] Found {beaconsFound} beacon processes");
 
-                finishedEvent.Set();
-                foreach(var bt in beaconMonitorThreads) {
-                    bt.Join();
+                if (beaconMonitorThreads.Count > 0 && monitor) {
+                    Console.WriteLine($"[+] Monitoring {beaconMonitorThreads.Count} beacon processes, press enter to stop monitoring");
+                    Console.ReadLine();
+                    Console.WriteLine($"[+] Exit triggered, detaching from beacon processes...");
+
+                    finishedEvent.Set();
+                    foreach (var bt in beaconMonitorThreads) {
+                        bt.Join();
+                    }
                 }
 
             } else {

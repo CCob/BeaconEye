@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
@@ -83,13 +84,11 @@ namespace BeaconEye.Config {
 
         public class ConfigAttrbute{
             public int Index { get; private set; }
-            public Type ConfigType { get; private set; }
             public string Name { get; private set; }
             public System.Type Type { get; private set; }
 
-            public ConfigAttrbute(int index, Type configType, string name, System.Type objectType) {
+            public ConfigAttrbute(int index, string name, System.Type objectType) {
                 Index = index;
-                ConfigType = configType;
                 Name = name;
                 Type = objectType;
             }
@@ -97,41 +96,76 @@ namespace BeaconEye.Config {
 
         static Dictionary<int, ConfigAttrbute> configTypes = new Dictionary<int, ConfigAttrbute>();
         public Dictionary<string, ConfigItem> Items { get; private set; } = new Dictionary<string, ConfigItem>();
+        public long Address { get; private set; }
+
+        int configEntrySize;
 
         static Configuration() {
-            configTypes.Add(1, new ConfigAttrbute(1, Type.Short, "BeaconType", typeof(ConfigShortItem)));
-            configTypes.Add(2, new ConfigAttrbute(2, Type.Short, "Port", typeof(ConfigShortItem)));
-            configTypes.Add(3, new ConfigAttrbute(3, Type.Integer, "Sleep", typeof(ConfigIntegerItem)));
-            configTypes.Add(4, new ConfigAttrbute(4, Type.Integer, "MaxGetSize",typeof(ConfigIntegerItem)));
-            configTypes.Add(5, new ConfigAttrbute(5, Type.Short, "Jitter", typeof(ConfigShortItem)));
-            configTypes.Add(6, new ConfigAttrbute(6, Type.Short, "MaxDNS", typeof(ConfigShortItem)));
-            configTypes.Add(8, new ConfigAttrbute(8, Type.String, "C2Server", typeof(ConfigStringItem)));
-            configTypes.Add(9, new ConfigAttrbute(9, Type.String, "UserAgent", typeof(ConfigStringItem)));
-            configTypes.Add(10, new ConfigAttrbute(10, Type.String, "HTTP_Post_URI", typeof(ConfigStringItem)));
-            configTypes.Add(11, new ConfigAttrbute(11, Type.String, "HTTPGetServerOutput", typeof(ConfigProgramItem)));
-            configTypes.Add(12, new ConfigAttrbute(12, Type.String, "HTTP_Get_Program", typeof(ConfigProgramItem)));
-            configTypes.Add(13, new ConfigAttrbute(13, Type.String, "HTTP_Post_Program", typeof(ConfigProgramItem)));
-        } 
-        
+            configTypes.Add(1, new ConfigAttrbute(1, "BeaconType", typeof(ConfigShortItem)));
+            configTypes.Add(2, new ConfigAttrbute(2, "Port", typeof(ConfigShortItem)));
+            configTypes.Add(3, new ConfigAttrbute(3, "Sleep", typeof(ConfigIntegerItem)));
+            configTypes.Add(4, new ConfigAttrbute(4, "MaxGetSize",typeof(ConfigIntegerItem)));
+            configTypes.Add(5, new ConfigAttrbute(5, "Jitter", typeof(ConfigShortItem)));
+            configTypes.Add(6, new ConfigAttrbute(6, "MaxDNS", typeof(ConfigShortItem)));
+            configTypes.Add(8, new ConfigAttrbute(8, "C2Server", typeof(ConfigStringItem)));
+            configTypes.Add(9, new ConfigAttrbute(9, "UserAgent", typeof(ConfigStringItem)));
+            configTypes.Add(10, new ConfigAttrbute(10, "HTTP_Post_URI", typeof(ConfigStringItem)));
+            configTypes.Add(11, new ConfigAttrbute(11, "HTTPGetServerOutput", typeof(ConfigProgramItem)));
+            configTypes.Add(12, new ConfigAttrbute(12, "HTTP_Get_Program", typeof(ConfigProgramItem)));
+            configTypes.Add(13, new ConfigAttrbute(13, "HTTP_Post_Program", typeof(ConfigProgramItem)));
+            configTypes.Add(14, new ConfigAttrbute(14, "Inject_Process", typeof(ConfigStringItem)));
+            configTypes.Add(15, new ConfigAttrbute(15, "PipeName", typeof(ConfigStringItem)));
+            configTypes.Add(19, new ConfigAttrbute(19, "DNS_idle", typeof(ConfigIntegerItem)));
+            configTypes.Add(20, new ConfigAttrbute(20, "DNS_sleep", typeof(ConfigIntegerItem)));
+            configTypes.Add(26, new ConfigAttrbute(26, "HTTP_Method1", typeof(ConfigStringItem)));
+            configTypes.Add(27, new ConfigAttrbute(27, "HTTP_Method2", typeof(ConfigStringItem)));
+            configTypes.Add(28, new ConfigAttrbute(28, "HttpPostChunk", typeof(ConfigIntegerItem)));
+            configTypes.Add(29, new ConfigAttrbute(29, "Spawnto_x86", typeof(ConfigStringItem)));
+            configTypes.Add(30, new ConfigAttrbute(30, "Spawnto_x64", typeof(ConfigStringItem)));
+            configTypes.Add(32, new ConfigAttrbute(32, "Proxy_Host", typeof(ConfigStringItem)));
+            configTypes.Add(33, new ConfigAttrbute(33, "Proxy_Username", typeof(ConfigStringItem)));
+            configTypes.Add(34, new ConfigAttrbute(34, "Proxy_Password", typeof(ConfigStringItem)));
+            configTypes.Add(37, new ConfigAttrbute(37, "Watermark", typeof(ConfigIntegerItem)));
+            configTypes.Add(38, new ConfigAttrbute(38, "StageCleanup", typeof(ConfigShortItem)));
+            configTypes.Add(39, new ConfigAttrbute(39, "CfgCaution", typeof(ConfigShortItem)));
+            configTypes.Add(40, new ConfigAttrbute(40, "KillDate", typeof(ConfigIntegerItem)));
+            configTypes.Add(54, new ConfigAttrbute(54, "Host_Header", typeof(ConfigStringItem)));
+        }
 
-        public  Configuration(BinaryReader configReader, NtProcess process) {
 
-            configReader.ReadBytes(16);
+        public  Configuration(long configAddress, BinaryReader configReader, NtProcess process) {
+
+            Address = configAddress;
+            configEntrySize = process.Is64Bit ? 16 : 8;
+            configReader.ReadBytes(configEntrySize);
             int index = 1;
 
             while (configReader.BaseStream.Position < configReader.BaseStream.Length) {
 
-                var type = (Type)configReader.ReadInt64();
+                Type type;
+
+                if (configEntrySize == 16)
+                    type = (Type)configReader.ReadInt64();
+                else
+                    type = (Type)configReader.ReadInt32();
 
                 if (!configTypes.ContainsKey(index) || type == Type.Unconfigured) {
-                    configReader.ReadBytes(8);
+                    configReader.ReadBytes(configEntrySize/2);
                     index++;
                     continue;
                 }
 
                 var configType = configTypes[index];
                 ConfigItem configItem = (ConfigItem)Activator.CreateInstance(configType.Type, new object[] { configType.Name });
+
+                if(configItem.ExpectedType != type) {
+                    throw new FormatException("Serialized config format does not match configuration type");
+                }
+
                 configItem.Parse(configReader, process);
+
+                if(configReader.BaseStream.Position % configEntrySize != 0)
+                    configReader.ReadBytes(configEntrySize - (int)configReader.BaseStream.Position % configEntrySize);
                                 
                 if(configItem != null)
                     Items.Add(configItem.Name, configItem);
@@ -139,10 +173,21 @@ namespace BeaconEye.Config {
                 index++;
             }
         }
+
+        public void PrintConfiguration(TextWriter writer, int numTabs) {
+            foreach (var config in Items) {
+                if (!string.IsNullOrWhiteSpace(config.Value.ToString())) {
+                    writer.Write(new string('\t', numTabs));
+                    writer.WriteLine(config.Value);
+                }
+                        }
+        }
     }
 
     public abstract class ConfigItem {
         public string Name { get; protected set; }
+
+        public abstract Type ExpectedType { get; }
 
         public ConfigItem(string name) {
             Name = name;
@@ -154,6 +199,7 @@ namespace BeaconEye.Config {
     public class ConfigShortItem : ConfigItem {
 
         public short Value { get; private set; }
+        public override Type ExpectedType => Type.Short;
 
         public ConfigShortItem(string name) : base(name) {
         }
@@ -164,13 +210,13 @@ namespace BeaconEye.Config {
 
         public override void Parse(BinaryReader br, NtProcess process) {
             Value = br.ReadInt16();
-            br.ReadBytes(6);
         }
     }
 
     public class ConfigIntegerItem : ConfigItem {
 
         public int Value { get; private set; }
+        public override Type ExpectedType => Type.Integer;
 
         public ConfigIntegerItem(string name) : base(name) {
    
@@ -182,11 +228,12 @@ namespace BeaconEye.Config {
 
         public override void Parse(BinaryReader br, NtProcess process) {
             Value = br.ReadInt32();
-            br.ReadBytes(4);
         }
     }
 
     public class ConfigStringItem : ConfigItem {
+
+        public override Type ExpectedType => Type.Bytes;
 
         public string Value { get; private set; }
 
@@ -197,8 +244,8 @@ namespace BeaconEye.Config {
             return $"{Name}: {Value}";
         }
 
-        public override void Parse(BinaryReader br, NtProcess process) {
-            Value = ReadNullString(process, br.ReadInt64());
+        public override void Parse(BinaryReader br, NtProcess process) {            
+            Value = ReadNullString(process, process.Is64Bit ? br.ReadInt64() : br.ReadInt32());
         }
 
         string ReadNullString(NtProcess process, long address) {
@@ -219,13 +266,38 @@ namespace BeaconEye.Config {
 
     public class ConfigProgramItem : ConfigItem {
 
+        public override Type ExpectedType => Type.Bytes;
+
         public BeaconProgram Value { get; private set; }
 
         public ConfigProgramItem(string name) : base(name) {
         }
 
         public override void Parse(BinaryReader br, NtProcess process) {
-            Value = BeaconProgram.Parse(br.ReadInt64(), process);         
+            Value = BeaconProgram.Parse(process.Is64Bit ? br.ReadInt64() : br.ReadInt32(), process);         
+        }
+
+        public override string ToString() {
+            var str = new StringBuilder();
+            str.AppendLine();
+            
+            foreach(var statement in Value.Statements) {  
+                
+                if(statement.Action == Action.NONE) {
+                    break;
+                }else if(statement.Action == Action.BUILD) {                    
+                    int type = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(statement.Argument, 0));
+                    if(type == 1) {
+                        str.AppendLine("\t\toutput:");
+                    } else {
+                        str.AppendLine("\t\tid|meta:");
+                    }
+                    continue;
+                }
+                
+                str.AppendLine($"\t\t{statement}"); 
+            }
+            return str.ToString();
         }
     }
 }
