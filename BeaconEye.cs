@@ -6,6 +6,7 @@ using NtApiDotNet.Win32;
 using SharpDisasm;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -316,6 +317,8 @@ namespace BeaconEye {
                 return;
             }
 
+            var timer = new Stopwatch();
+            timer.Start();
             Console.WriteLine($"[+] Scanning for beacon processess...");
             if(processFilter != null) {
                 Console.WriteLine($"[=] Using process filter {processFilter}*");
@@ -326,6 +329,7 @@ namespace BeaconEye {
 
             var originalColor = Console.ForegroundColor;
             var beaconsFound = 0;
+            var processesScanned = 0;
             
             foreach (var process in processes) {
 
@@ -345,11 +349,16 @@ namespace BeaconEye {
                 } else if(sr.State == ScanState.HeapEnumFailed) {
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine($"  {process.Name} ({process.ProcessId}) Failed to fetch heap info");
-                }    
+                }
+
+                processesScanned++;
             }
+
+            timer.Stop();
             Console.ForegroundColor = originalColor;
-                        
-            if(beaconsFound > 0) {
+            Console.WriteLine($"[+] Scanned {processesScanned} processes in {timer.Elapsed}");
+
+            if (beaconsFound > 0) {
 
                 Console.WriteLine($"[+] Found {beaconsFound} beacon processes");
 

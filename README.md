@@ -31,11 +31,11 @@ BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacon
 
 ## TODO
 
-* Implement 32bit beacon monitoring
-* Add support for named pipe beacons
-* Add support for TCP beacons
+* ~~Implement 32bit beacon monitoring~~
+* Add support for monitoring named pipe beacons
+* Add support for monitoring TCP beacons
 * Add support for CobaltStrike 3.x
-* Add command line argument for targeting specific process
+* ~~Add command line argument for targeting specific processes~~
 * Add command line argument to specify output logging location
 * Add support for extracting operator commands
 

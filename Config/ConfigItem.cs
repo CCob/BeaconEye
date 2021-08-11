@@ -179,8 +179,8 @@ namespace BeaconEye.Config {
                 if (!string.IsNullOrWhiteSpace(config.Value.ToString())) {
                     writer.Write(new string('\t', numTabs));
                     writer.WriteLine(config.Value);
-                }
-                        }
+                }                       
+            }
         }
     }
 
