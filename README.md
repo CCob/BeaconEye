@@ -25,7 +25,7 @@ A log folder is created per process relative to the current directory where Beac
 
 ## Caveats
 
-BeaconEye currently supports 64 bit 4.x HTTP/HTTPS beacons only.  At present, only command output is decoded and not command requests. See TODO list below for a full list of intended features.
+BeaconEye can detect all beacon types but only monitor HTTP/HTTPS beacons.  At present, only command output is decoded and not command requests. See TODO list below for a full list of intended features.
 
 BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacons that cannot be detected or where the malleable C2 profile has not been parsed correctly resulting in incorrect decoding of output.
 
