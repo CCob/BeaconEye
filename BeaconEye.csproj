@@ -90,7 +90,6 @@
     <Compile Include="Reader\ProcessReader.cs" />
     <Compile Include="Reader\RunningProcessEnumerator.cs" />
     <Compile Include="StringUtils.cs" />
-    <Compile Include="WindowsMinidump.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

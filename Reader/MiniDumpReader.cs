@@ -166,7 +166,21 @@ namespace BeaconEye {
             public uint FileDateMS;
             public uint FileDateLS;
         }
-        
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        struct SystemInfo {
+            public ushort ProcessorArchitecture;
+            public ushort ProcessorLevel;
+            public ushort ProcessorRevision;
+            public byte NumberOfProcessors;
+            public byte ProductType;
+            public uint MajorVersion;
+            public uint MinorVersion;
+            public uint BuildNumber;
+            public uint PlatformId;
+            public uint CDSVersionRva;
+        }
+
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
         struct PartialTeb64 {
             public ulong SehFrame;
@@ -189,6 +203,7 @@ namespace BeaconEye {
         List<MiniDumpThread> threads = new List<MiniDumpThread>();
         List<Module> modules = new List<Module>();
         List<MemoryDescriptorFull> memoryInfoFull = new List<MemoryDescriptorFull>();
+        SystemInfo systemInfo;
         ulong memoryFullRVA;
         ulong pebAddress;
         string processName;
@@ -255,19 +270,13 @@ namespace BeaconEye {
                     while(moduleCount-- > 0) {
                         modules.Add(ReadStruct<Module>());
                     }
+                }else if(dir.StreamType == StreamType.SystemInfoStream) {
+                    systemInfo = ReadStruct<SystemInfo>();
                 }
             }
 
             processName = Path.GetFileName(ReadMinidumpString(modules[0].ModuleNameRva));
-
-            foreach (var mod in modules) {
-                var moduleName = ReadMinidumpString(mod.ModuleNameRva);
-                if (moduleName.ToLower().Contains(@"\windows\syswow64\")) {
-                    is64 = false;
-                    break;
-                }
-            }
-
+            is64 = systemInfo.ProcessorArchitecture == 9;    
             pebAddress = ReadMemory<PartialTeb64>(threads[0].Teb).PebAddress;
         }
 
