@@ -59,14 +59,20 @@ namespace BeaconEye {
         long keys_address;
         string folderName;
 
-        public BeaconProcess(NtProcess process, Configuration beaconConfig, long iv_address, long keys_address, ref ManualResetEvent finishedEvent) {
-            Process = process;
+        public BeaconProcess(ProcessReader process, Configuration beaconConfig, long iv_address, long keys_address, ref ManualResetEvent finishedEvent) {
+
+            if(process is NtProcessReader ntpr) {
+                Process = ntpr.Process;
+            } else {
+                throw new ArgumentException("Only live processes can be monitored");
+            }
+
             BeaconConfig = beaconConfig;
             this.iv_address = iv_address;
             this.keys_address = keys_address;
             this.finishedEvent = finishedEvent;
             
-            folderName = $"{process.Name}_{process.ProcessId}_{process.User.Name.Replace('\\','_')}";
+            folderName = $"{process.Name}_{process.ProcessId}_{Process.User.Name.Replace('\\','_')}";
 
             Directory.CreateDirectory(folderName);
             logFile = new StreamWriter(new FileStream(Path.Combine(folderName, "activity.log"), FileMode.Create, FileAccess.ReadWrite));

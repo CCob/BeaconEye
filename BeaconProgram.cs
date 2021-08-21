@@ -143,13 +143,13 @@ namespace BeaconEye {
             return decoded;
         }
 
-        internal static BeaconProgram Parse(long address, NtProcess process) {
+        internal static BeaconProgram Parse(long address, ProcessReader process) {
 ; 
             var result = new BeaconProgram();
             bool done = false;
 
             while (!done) {
-                var action = (Action)IPAddress.NetworkToHostOrder(process.ReadMemory<int>(address));
+                var action = (Action)IPAddress.NetworkToHostOrder(process.ReadMemory<int>((ulong)address));
                 address += 4;
 
                 var actionParameter = new byte[0];
@@ -167,14 +167,14 @@ namespace BeaconEye {
                     case Action.hostheader:
                     case Action.uri_append:
                     case Action.base64url:
-                        int actionParamLen = IPAddress.NetworkToHostOrder(process.ReadMemory<int>(address));
+                        int actionParamLen = IPAddress.NetworkToHostOrder(process.ReadMemory<int>((ulong)address));
                         address += 4;
-                        actionParameter = process.ReadMemory(address, actionParamLen);
+                        actionParameter = process.ReadMemory((ulong)address, actionParamLen);
                         address += actionParamLen;
                         break;
                     
                     case Action.BUILD:
-                        actionParameter = process.ReadMemory(address, 4);
+                        actionParameter = process.ReadMemory((ulong)address, 4);
                         address += 4;
                         break;
 

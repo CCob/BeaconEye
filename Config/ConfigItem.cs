@@ -133,7 +133,7 @@ namespace BeaconEye.Config {
         }
 
 
-        public  Configuration(long configAddress, BinaryReader configReader, NtProcess process) {
+        public  Configuration(long configAddress, BinaryReader configReader, ProcessReader process) {
 
             Address = configAddress;
             configEntrySize = process.Is64Bit ? 16 : 8;
@@ -193,7 +193,7 @@ namespace BeaconEye.Config {
             Name = name;
         }
 
-        public abstract void Parse(BinaryReader br, NtProcess process);
+        public abstract void Parse(BinaryReader br, ProcessReader process);
     }
 
     public class ConfigShortItem : ConfigItem {
@@ -208,7 +208,7 @@ namespace BeaconEye.Config {
             return $"{Name}: {Value}";
         }
 
-        public override void Parse(BinaryReader br, NtProcess process) {
+        public override void Parse(BinaryReader br, ProcessReader process) {
             Value = br.ReadInt16();
         }
     }
@@ -226,7 +226,7 @@ namespace BeaconEye.Config {
             return $"{Name}: {Value}";
         }
 
-        public override void Parse(BinaryReader br, NtProcess process) {
+        public override void Parse(BinaryReader br, ProcessReader process) {
             Value = br.ReadInt32();
         }
     }
@@ -244,16 +244,16 @@ namespace BeaconEye.Config {
             return $"{Name}: {Value}";
         }
 
-        public override void Parse(BinaryReader br, NtProcess process) {            
+        public override void Parse(BinaryReader br, ProcessReader process) {            
             Value = ReadNullString(process, process.Is64Bit ? br.ReadInt64() : br.ReadInt32());
         }
 
-        string ReadNullString(NtProcess process, long address) {
+        string ReadNullString(ProcessReader process, long address) {
 
             MemoryStream ms = new MemoryStream();
 
             while (true) {
-                var strChar = process.ReadMemory(address++, 1);
+                var strChar = process.ReadMemory((ulong)address++, 1);
                 if (strChar[0] == '\0') {
                     break;
                 }
@@ -273,7 +273,7 @@ namespace BeaconEye.Config {
         public ConfigProgramItem(string name) : base(name) {
         }
 
-        public override void Parse(BinaryReader br, NtProcess process) {
+        public override void Parse(BinaryReader br, ProcessReader process) {
             Value = BeaconProgram.Parse(process.Is64Bit ? br.ReadInt64() : br.ReadInt32(), process);         
         }
 

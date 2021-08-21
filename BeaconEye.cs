@@ -1,4 +1,6 @@
 ﻿using BeaconEye.Config;
+using BeaconEye.Reader;
+using Kaitai;
 using libyaraNET;
 using Mono.Options;
 using NtApiDotNet;
@@ -122,9 +124,9 @@ namespace BeaconEye {
             }
         }
 
-        static Configuration ProcessHasConfig(NtProcess process) {
-                    
-            var heaps = GetHeaps(process);
+        static Configuration ProcessHasConfig(ProcessReader process) {
+
+            var heaps = process.Heaps;
 
             using (var ctx = new YaraContext()) {
                 var rules = CompileRules(process.Is64Bit);
@@ -132,15 +134,15 @@ namespace BeaconEye {
 
                 foreach (var heap in heaps) {
                       
-                    var memoryInfo = process.QueryMemoryInformation(heap);
+                    var memoryInfo = process.QueryMemoryInfo((ulong)heap);
                     var memory = process.ReadMemory(memoryInfo.BaseAddress, (int)memoryInfo.RegionSize);
                     var results = scanner.ScanMemory(memory, rules);
 
                     if (results.Count > 0) {
                         foreach (KeyValuePair<string, List<Match>> item in results[0].Matches) {
-                            var configStart = memoryInfo.BaseAddress + (long)item.Value[0].Offset;
+                            var configStart = memoryInfo.BaseAddress + item.Value[0].Offset;
                             var configBytes = process.ReadMemory(configStart, process.Is64Bit ? 0x800 : 0x400);
-                            return new Configuration(configStart, new BinaryReader(new MemoryStream(configBytes)), process);
+                            return new Configuration((long)configStart, new BinaryReader(new MemoryStream(configBytes)), process);
                         }
                     }
                 }                
@@ -155,7 +157,7 @@ namespace BeaconEye {
             }
         }
 
-        static Tuple<long,long> GetKeyIVAddress(MemoryInformation blockInfo, NtProcess process) {
+        static Tuple<long,long> GetKeyIVAddress(ProcessReader.MemoryInfo blockInfo, ProcessReader process) {
 
             if (process.Is64Bit) {
 
@@ -164,7 +166,7 @@ namespace BeaconEye {
 
                 foreach (var offset in offsets) {
 
-                    byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + offset, 15);
+                    byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + (ulong)offset, 15);
                     Disassembler disasm = new Disassembler(instructions, ArchitectureMode.x86_64, (ulong)blockInfo.BaseAddress + (ulong)offset);
 
                     var movupsIns = disasm.NextInstruction();
@@ -190,7 +192,7 @@ namespace BeaconEye {
 
                 foreach (var offset in offsets) {
 
-                    byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + offset - 5, 24);
+                    byte[] instructions = process.ReadMemory(blockInfo.BaseAddress + (ulong)offset - 5, 24);
                     Disassembler disasm = new Disassembler(instructions, ArchitectureMode.x86_32, (ulong)blockInfo.BaseAddress + (ulong)offset);
 
                     var movEDIMem = disasm.NextInstruction();
@@ -228,7 +230,7 @@ namespace BeaconEye {
             return null;
         }
 
-        static ScanResult IsBeaconProcess(NtProcess process, bool monitor) {
+        static ScanResult IsBeaconProcess(ProcessReader process, bool monitor) {
             
             try {
 
@@ -237,11 +239,11 @@ namespace BeaconEye {
                     return new ScanResult();
                 }
 
-                var memoryInfo = process.QueryAllMemoryInformation();
+                var memoryInfo = process.QueryAllMemoryInfo();
 
                 foreach (var blockInfo in memoryInfo) {
 
-                    if(blockInfo.Protect != MemoryAllocationProtect.ExecuteRead && blockInfo.Protect != MemoryAllocationProtect.ExecuteReadWrite) {
+                    if(!blockInfo.IsExecutable) {
                         continue;
                     }
 
@@ -290,6 +292,8 @@ namespace BeaconEye {
             string processFilter = null;
             bool showHelp = false;
             bool verbose = false;
+            string dump = null;
+            IProcessEnumerator procEnum;
 
             Console.WriteLine(
                     "BeconEye by @_EthicalChaos_\n" +
@@ -299,7 +303,8 @@ namespace BeaconEye {
             OptionSet option_set = new OptionSet()
                 .Add("v|verbose", "Attach to and monitor beacons found", v => verbose = true)
                 .Add("m|monitor", "Attach to and monitor beacons found", v => monitor = true)
-                .Add("p=|process=", "Filter process list wih names starting with x", v => processFilter = v)
+                .Add("f=|filter=", "Filter process list wih names starting with x or file extensions in Minidump mode", v => processFilter = v)
+                .Add("d=|dump=", "Scan a Minidump for a Cobalt Strike beacon", v => dump = v)
                 .Add("h|help", "Display this help", v => showHelp = v != null);
 
             try {
@@ -324,17 +329,17 @@ namespace BeaconEye {
                 Console.WriteLine($"[=] Using process filter {processFilter}*");
             }
 
-            var processes = NtProcess.GetProcesses(ProcessAccessRights.AllAccess)
-                .Where(p => processFilter != null ? p.Name.ToLower().StartsWith(processFilter.ToLower()) : true);
+            if (!string.IsNullOrEmpty(dump)) {
+                procEnum = new MiniDumpProcessEnumerator(dump);
+            } else {
+                procEnum = new RunningProcessEnumerator();
+            }
 
             var originalColor = Console.ForegroundColor;
             var beaconsFound = 0;
             var processesScanned = 0;
             
-            foreach (var process in processes) {
-
-                if (process.ExitNtStatus != NtStatus.STATUS_PENDING)
-                    continue;
+            foreach (var process in procEnum.GetProcesses()) {
 
                 ScanResult sr;
 
