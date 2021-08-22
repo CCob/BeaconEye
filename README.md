@@ -8,11 +8,28 @@ BeaconEye scans running processes for active CobaltStrike beacons.  When process
 
 ## How it works
 
-If a suspected CobaltStrike beacon is found through scanning running processes, BeaconEye attaches itself as a debugger and will begin monitoring beacon activity for C2 traffic (HTTP/HTTPS beacons supported currently).
+BeaconEye will scan live processes or MiniDump files for suspected CobaltStrike beacons.  In live process mode, BeaconEye optionally attaches itself as a debugger and will begin monitoring beacon activity for C2 traffic (HTTP/HTTPS beacons supported currently).
 
 The AES keys used for encrypting C2 data and mallable profile are decoded on the fly, which enables BeaconEye to extract and decrypt beacon's output when commands are sent via the operator.
 
-A log folder is created per process relative to the current directory where BeaconEye is executed from.
+A log folder of activity is created per process relative to the current directory where BeaconEye is executed from.
+
+## Usage
+
+```shell
+BeconEye by @_EthicalChaos_
+  CobaltStrike beacon hunter and command monitoring tool x86_64
+
+  -v, --verbose              Display more verbose output instead of just
+                               information on beacons found
+  -m, --monitor              Attach to and monitor beacons found when scanning
+                               live processes
+  -f, --filter=VALUE         Filter process list with names starting with x (
+                               live mode only)
+  -d, --dump=VALUE           A folder to use for MiniDump mode to scan for
+                               beacons (files with *.dmp or *.mdmp)
+  -h, --help                 Display this help
+```
 
 ## Features
 
@@ -22,6 +39,7 @@ A log folder is created per process relative to the current directory where Beac
 * Saves screenshots
 * Detects standalone and injected beacons
 * Detects beacons masked with built in `sleep_mask`
+* Scan running processes or Minidumps offline
 
 ## Caveats
 
@@ -38,7 +56,7 @@ BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacon
 * ~~Add command line argument for targeting specific processes~~
 * Add command line argument to specify output logging location
 * Add support for extracting operator commands
-* Support scanning MiniDump files
+* ~~Support scanning MiniDump files~~
 
 
 ## References and Thanks

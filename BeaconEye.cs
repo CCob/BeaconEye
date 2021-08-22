@@ -1,21 +1,15 @@
 ﻿using BeaconEye.Config;
 using BeaconEye.Reader;
-using Kaitai;
 using libyaraNET;
 using Mono.Options;
 using NtApiDotNet;
-using NtApiDotNet.Win32;
 using SharpDisasm;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace BeaconEye {
     class BeaconEye {
@@ -88,42 +82,7 @@ namespace BeaconEye {
             }
             return positions;
         }
-
-        static long ReadPointer(NtProcess process, long address) {
-            if (process.Is64Bit) {
-                return process.ReadMemory<long>(address);
-            } else {
-                return process.ReadMemory<int>(address);
-            }
-        }
-
-        static List<long> GetHeaps(NtProcess process) {
-
-            try {
-                int numHeaps;
-                long heapArray;
-
-                if (process.Is64Bit) {
-                    numHeaps = process.ReadMemory<int>((long)process.PebAddress + 0xE8);
-                    heapArray = ReadPointer(process, (long)process.PebAddress + 0xF0);
-                } else {
-                    numHeaps = process.ReadMemory<int>((int)process.PebAddress32 + 0x88);
-                    heapArray = ReadPointer(process, (long)process.PebAddress32 + 0x90);
-                }
-
-                var heaps = new List<long>();
-                for (int idx = 0; idx < numHeaps; ++idx) {
-                    var heap = ReadPointer(process, heapArray + (idx * (process.Is64Bit ? 8 : 4)));
-                    heaps.Add(heap);
-                }
-
-                return heaps;
-
-            } catch (Exception) {
-                throw new FetchHeapsException();
-            }
-        }
-
+ 
         static Configuration ProcessHasConfig(ProcessReader process) {
 
             var heaps = process.Heaps;
@@ -279,7 +238,7 @@ namespace BeaconEye {
                     Configuration = beaconConfig
                 };
 
-            } catch (FetchHeapsException e) {
+            } catch (FetchHeapsException) {
                 return new ScanResult() {
                     State = ScanState.HeapEnumFailed
                 };                
@@ -301,10 +260,10 @@ namespace BeaconEye {
                    );
 
             OptionSet option_set = new OptionSet()
-                .Add("v|verbose", "Attach to and monitor beacons found", v => verbose = true)
-                .Add("m|monitor", "Attach to and monitor beacons found", v => monitor = true)
-                .Add("f=|filter=", "Filter process list wih names starting with x or file extensions in Minidump mode", v => processFilter = v)
-                .Add("d=|dump=", "Scan a Minidump for a Cobalt Strike beacon", v => dump = v)
+                .Add("v|verbose", "Display more verbose output instead of just information on beacons found", v => verbose = true)
+                .Add("m|monitor", "Attach to and monitor beacons found when scanning live processes", v => monitor = true)
+                .Add("f=|filter=", "Filter process list with names starting with x (live mode only)", v => processFilter = v)
+                .Add("d=|dump=", "A folder to use for MiniDump mode to scan for beacons (files with *.dmp or *.mdmp)", v => dump = v)
                 .Add("h|help", "Display this help", v => showHelp = v != null);
 
             try {
@@ -330,9 +289,9 @@ namespace BeaconEye {
             }
 
             if (!string.IsNullOrEmpty(dump)) {
-                procEnum = new MiniDumpProcessEnumerator(dump);
+                procEnum = new MiniDumpProcessEnumerator(dump, verbose);
             } else {
-                procEnum = new RunningProcessEnumerator();
+                procEnum = new RunningProcessEnumerator(processFilter);
             }
 
             var originalColor = Console.ForegroundColor;

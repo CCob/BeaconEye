@@ -198,6 +198,23 @@ namespace BeaconEye {
             public ulong PebAddress;
         }
 
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        struct PartialTeb32 {
+            public uint SehFrame;
+            public uint StackBase;
+            public uint StackLimit;
+            public uint SubSystemTib;
+            public uint FibreData;
+            public uint DataSlot;
+            public uint TebAddress;
+            public uint EnvironmentPointer;
+            public uint ProcessId;
+            public uint ThreadId;
+            public uint ActiveRPCHandle;
+            public uint ThreadLocalStorageAddr;
+            public uint PebAddress;
+        }
+
         Stream miniDumpStream;
         BinaryReader miniDumpReader;
         List<MiniDumpThread> threads = new List<MiniDumpThread>();
@@ -228,7 +245,6 @@ namespace BeaconEye {
         public MiniDumpReader(Stream source) {
 
             miniDumpStream = source;
-            var br = new BinaryReader(miniDumpStream);
 
             if (!source.CanSeek) {
                 throw new ArgumentException("Only seekable streams supported");
@@ -238,6 +254,15 @@ namespace BeaconEye {
             source.Seek(0, SeekOrigin.Begin);
 
             var hdr = ReadStruct<Header>();
+
+            if(hdr.Signature != 0x504d444d) {
+                throw new FormatException("Input stream doesn't appear to be a Minidump");
+            }
+
+            if( ((ulong)hdr.Flags | (ulong)MinidumpType.MiniDumpWithFullMemoryInfo) == 0) {
+                throw new FormatException("Only full Minidump types supported");
+            }
+
             var directories = new List<Directory>();
             source.Seek(hdr.StreamsDirectoryRva, SeekOrigin.Begin);
 
@@ -251,33 +276,42 @@ namespace BeaconEye {
 
                 if (dir.StreamType == StreamType.ThreadListStream) {
 
-                    var threadCount = br.ReadInt32();
+                    var threadCount = miniDumpReader.ReadInt32();
                     for (int idx = 0; idx < threadCount; ++idx) {
                         threads.Add(ReadStruct<MiniDumpThread>());
                     }
 
                 } else if (dir.StreamType == StreamType.Memory64ListStream) {
 
-                    var memoryRangeCount = br.ReadUInt64();
-                    memoryFullRVA = br.ReadUInt64();
+                    var memoryRangeCount = miniDumpReader.ReadUInt64();
+                    memoryFullRVA = miniDumpReader.ReadUInt64();
                     for (uint idx = 0; idx < memoryRangeCount; ++idx) {
                         memoryInfoFull.Add(ReadStruct<MemoryDescriptorFull>());
                     }
 
-                } else if(dir.StreamType == StreamType.ModuleListStream) {
+                } else if (dir.StreamType == StreamType.ModuleListStream) {
 
-                    var moduleCount = br.ReadInt32();
-                    while(moduleCount-- > 0) {
+                    var moduleCount = miniDumpReader.ReadInt32();
+                    while (moduleCount-- > 0) {
                         modules.Add(ReadStruct<Module>());
                     }
-                }else if(dir.StreamType == StreamType.SystemInfoStream) {
+                } else if (dir.StreamType == StreamType.SystemInfoStream) {
                     systemInfo = ReadStruct<SystemInfo>();
                 }
             }
 
             processName = Path.GetFileName(ReadMinidumpString(modules[0].ModuleNameRva));
-            is64 = systemInfo.ProcessorArchitecture == 9;    
-            pebAddress = ReadMemory<PartialTeb64>(threads[0].Teb).PebAddress;
+            is64 = systemInfo.ProcessorArchitecture == 9;
+
+            if (is64) {
+                var teb = ReadMemory<PartialTeb64>(threads[0].Teb);
+                processId = (int)teb.ProcessId;
+                pebAddress = teb.PebAddress;
+            } else {
+                var teb = ReadMemory<PartialTeb32>(threads[0].Teb);
+                processId = (int)teb.ProcessId;
+                pebAddress = teb.PebAddress;
+            }
         }
 
         string ReadMinidumpString(long rva) {
