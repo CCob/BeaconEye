@@ -302,17 +302,24 @@ namespace BeaconEye {
 
                 ScanResult sr;
 
-                if ((sr = IsBeaconProcess(process, monitor)).State == ScanState.Found || sr.State == ScanState.FoundNoKeys) {
-                    beaconsFound++;
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"  {process.Name} ({process.ProcessId}), Keys Found:{sr.State == ScanState.Found}, Configuration Address: 0x{sr.ConfigAddress} {(sr.CrossArch ? $"(Please use the {(process.Is64Bit ? "x64" : "x86")} version of BeaconEye to monitor)" : "")}");
-                    sr.Configuration.PrintConfiguration(Console.Out, 1);
-                } else if(sr.State == ScanState.NotFound && verbose) {
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"  {process.Name} ({process.ProcessId})");
-                } else if(sr.State == ScanState.HeapEnumFailed) {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"  {process.Name} ({process.ProcessId}) Failed to fetch heap info");
+                try
+                {
+                    if ((sr = IsBeaconProcess(process, monitor)).State == ScanState.Found || sr.State == ScanState.FoundNoKeys) {
+                        beaconsFound++;
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"  {process.Name} ({process.ProcessId}), Keys Found:{sr.State == ScanState.Found}, Configuration Address: 0x{sr.ConfigAddress} {(sr.CrossArch ? $"(Please use the {(process.Is64Bit ? "x64" : "x86")} version of BeaconEye to monitor)" : "")}");
+                        sr.Configuration.PrintConfiguration(Console.Out, 1);
+                    } else if(sr.State == ScanState.NotFound && verbose) {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"  {process.Name} ({process.ProcessId})");
+                    } else if(sr.State == ScanState.HeapEnumFailed) {
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine($"  {process.Name} ({process.ProcessId}) Failed to fetch heap info");
+                    }
+                }
+                catch (NtException e)
+                {
+                    Console.Error.WriteLine($"[!] NtException \"{e.Status}\" for process {process.ProcessId} ({process.Name}).");
                 }
 
                 processesScanned++;
