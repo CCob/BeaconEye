@@ -319,7 +319,7 @@ namespace BeaconEye {
                 }
                 catch (NtException e)
                 {
-                    Console.Error.WriteLine($"WARN: NtException \"{e.Status}\" for process {process.ProcessId} ({process.Name}).");
+                    Console.Error.WriteLine($"[!] NtException \"{e.Status}\" for process {process.ProcessId} ({process.Name}).");
                 }
 
                 processesScanned++;
