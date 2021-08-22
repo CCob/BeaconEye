@@ -61,5 +61,6 @@ BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacon
 
 ## References and Thanks
 
-* BeaconEye's initial beacon process detection is heavily based on @Apr4h's [CobaltStrikeScan](https://github.com/Apr4h/CobaltStrikeScan)
-* James Forshaw's NtApiDotNet library, which makes process deubgging and interaction a breeze from C#
+* BeaconEye's initial beacon process detection is heavily based on @Apr4h's [CobaltStrikeScan](https://github.com/Apr4h/CobaltStrikeScan).
+* James Forshaw's NtApiDotNet library, which makes process deubgging and interaction a breeze from C#.
+* @cube0x0 for his port of a pure managed C# MiniDump reader which was used as a reference. 
