@@ -8,7 +8,7 @@ BeaconEye scans running processes for active CobaltStrike beacons.  When process
 
 ## How it works
 
-BeaconEye attaches itself as a debugger to each process and will begin monitoring beacon activity for C2 traffic (HTTP/HTTPS beacons supported currently).
+If a suspected CobaltStrike beacon is found through scanning running processes, BeaconEye attaches itself as a debugger and will begin monitoring beacon activity for C2 traffic (HTTP/HTTPS beacons supported currently).
 
 The AES keys used for encrypting C2 data and mallable profile are decoded on the fly, which enables BeaconEye to extract and decrypt beacon's output when commands are sent via the operator.
 
@@ -25,7 +25,7 @@ A log folder is created per process relative to the current directory where Beac
 
 ## Caveats
 
-BeaconEye currently supports 64 bit 4.x HTTP/HTTPS beacons only.  At present, only command output is decoded and not command requests. See TODO list below for a full list of intended features.
+BeaconEye can detect all beacon types but only monitor HTTP/HTTPS beacons.  At present, only command output is decoded and not command requests. See TODO list below for a full list of intended features.
 
 BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacons that cannot be detected or where the malleable C2 profile has not been parsed correctly resulting in incorrect decoding of output.
 
@@ -38,6 +38,8 @@ BeaconEye should be considered **ALPHA**, I'm keen to get feedback on 4.x beacon
 * ~~Add command line argument for targeting specific processes~~
 * Add command line argument to specify output logging location
 * Add support for extracting operator commands
+* Support scanning MiniDump files
+
 
 ## References and Thanks
 
