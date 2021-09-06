@@ -29,14 +29,16 @@ namespace BeaconEye {
         }
 
         public override MemoryInfo QueryMemoryInfo(ulong address) {
-            var info = process.QueryMemoryInformation((long)address);
+            
+            var info = process.QueryMemoryInformation((long)address);          
+
             return new MemoryInfo((ulong)info.BaseAddress, (ulong)info.AllocationBase, (ulong)info.RegionSize, 
-                info.Protect == MemoryAllocationProtect.ExecuteRead || info.Protect == MemoryAllocationProtect.ExecuteReadWrite);
+                info.Protect == MemoryAllocationProtect.ExecuteRead || info.Protect == MemoryAllocationProtect.ExecuteReadWrite, ((int)info.Protect & (int)MemoryAllocationProtect.NoAccess) == (int)MemoryAllocationProtect.NoAccess);
         }
 
         public override IEnumerable<MemoryInfo> QueryAllMemoryInfo() {
             return process.QueryAllMemoryInformation().Select(info => new MemoryInfo((ulong)info.BaseAddress, (ulong)info.AllocationBase, (ulong)info.RegionSize,
-                info.Protect == MemoryAllocationProtect.ExecuteRead || info.Protect == MemoryAllocationProtect.ExecuteReadWrite));            
+                info.Protect == MemoryAllocationProtect.ExecuteRead || info.Protect == MemoryAllocationProtect.ExecuteReadWrite, ((int)info.Protect & (int)MemoryAllocationProtect.NoAccess) == (int)MemoryAllocationProtect.NoAccess));            
         }
     }
 }

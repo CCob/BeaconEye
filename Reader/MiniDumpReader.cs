@@ -372,7 +372,7 @@ namespace BeaconEye {
 
             foreach (var descriptor in memoryInfoFull) {
                 if (address >= descriptor.StartOfMemoryRange && address < descriptor.StartOfMemoryRange + descriptor.DataSize) {
-                    return new MemoryInfo(descriptor.StartOfMemoryRange, descriptor.StartOfMemoryRange, descriptor.DataSize, false);                
+                    return new MemoryInfo(descriptor.StartOfMemoryRange, descriptor.StartOfMemoryRange, descriptor.DataSize, false, false);                
                 }
                 fileAddress += descriptor.DataSize;
             }
@@ -381,7 +381,7 @@ namespace BeaconEye {
         }
 
         public override IEnumerable<MemoryInfo> QueryAllMemoryInfo() {
-            return memoryInfoFull.Select(mi => new MemoryInfo(mi.StartOfMemoryRange, mi.StartOfMemoryRange, mi.DataSize, false));
+            return memoryInfoFull.Select(mi => new MemoryInfo(mi.StartOfMemoryRange, mi.StartOfMemoryRange, mi.DataSize, false, false));
         }
     }
 }

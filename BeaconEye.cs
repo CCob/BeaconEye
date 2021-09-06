@@ -94,6 +94,10 @@ namespace BeaconEye {
                 foreach (var heap in heaps) {
                       
                     var memoryInfo = process.QueryMemoryInfo((ulong)heap);
+
+                    if (memoryInfo.NoAccess)
+                        continue;
+
                     var memory = process.ReadMemory(memoryInfo.BaseAddress, (int)memoryInfo.RegionSize);
                     var results = scanner.ScanMemory(memory, rules);
 
