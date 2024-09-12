@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+//using System.Diagnostics;
 
 namespace BeaconEye {
     public abstract class ProcessReader {
@@ -46,38 +47,148 @@ namespace BeaconEye {
             return (Is64Bit ? 8 : 4);
         }
 
-        public List<long> Heaps { get {
+        public List<long> Heaps
+        {
+            get
+            {
 
                 int numHeaps;
                 long heapArray;
+                long segmentListEntry;
 
-                if (Is64Bit) {
+
+                //System.Console.WriteLine("Process Id: " + this.ProcessId);
+                ////Ignore Large Memory Process
+                //Process p = Process.GetProcessById(this.ProcessId);
+                //if (p.PrivateMemorySize64 / (1024 * 1024) > 200)
+                //{
+                //    return new List<long>();
+                //}
+
+                //if (p.ProcessName == "explorer")
+                //{
+                //    return new List<long>();
+                //}
+
+                if (Is64Bit)
+                {
                     numHeaps = ReadMemory<int>(PebAddress + 0xE8);
                     heapArray = ReadPointer(PebAddress + 0xF0);
-                } else {
+
+                }
+                else
+                {
                     numHeaps = ReadMemory<int>(PebAddress + 0x88);
                     heapArray = ReadPointer(PebAddress + 0x90);
                 }
 
                 var heaps = new List<long>();
-                for (int idx = 0; idx < numHeaps; ++idx) {
-                    var heap = ReadPointer((ulong)(heapArray + (idx * PointerSize())));
-                    
-                    if (IsSegmentHeap(heap)) {
-                        var segmentListEntryForward = ReadPointer((ulong)heap + 0x18);
-                        var segmentBase = ReadPointer((ulong)heap + 0x30);
+                for (int idx = 0; idx < numHeaps; ++idx)
+                {
+                    var heap = ReadPointer((ulong)(heapArray + (idx * (Is64Bit ? 8 : 4))));
+                    long segmentEnd;
+                    short xorkey;
 
-                        while (!heaps.Contains(segmentBase)) {
-                            heaps.Add(segmentBase);
-                            segmentListEntryForward = ReadPointer((ulong)segmentListEntryForward + (ulong)PointerSize());
-                            segmentBase = ReadPointer((ulong)segmentListEntryForward + 0x30);
-                        }
-
-                    } else {
-
-                        //TODO: Handle Windows 10 Segment Heap 
-                        heaps.Add(heap);
+                    //Get Heap Entry Xor Key
+                    if (Is64Bit)
+                    {
+                        xorkey = ReadMemory<short>((ulong)heap + 0x88);
                     }
+                    else
+                    {
+                        xorkey = ReadMemory<short>((ulong)heap + 0x50);
+                    }
+
+                    //Get SegmentListEntry
+                    if (Is64Bit)
+                    {
+                        segmentListEntry = ReadPointer((ulong)heap + 0x18) - 0x18;
+                    }
+                    else
+                    {
+                        segmentListEntry = ReadPointer((ulong)heap + 0x10) - 0x10;
+                    }
+                    //Record LinkList
+                    if (Is64Bit)
+                    {
+                        segmentEnd = ReadPointer((ulong)heap + 0x18 + 0x08) - 0x18;
+                    }
+                    else
+                    {
+                        segmentEnd = ReadPointer((ulong)heap + 0x10 + 0x04) - 0x10;
+                    }
+
+                    heaps.Add(segmentListEntry);
+                    while (ReadPointer((ulong)segmentListEntry) != ReadPointer((ulong)segmentEnd))
+                    {
+                        if (Is64Bit)
+                        {
+                            segmentListEntry = ReadPointer((ulong)(segmentListEntry) + 0x18) - 0x18;
+                            //Calculate Heap Entry
+
+                            //Check Segment Signature
+                            if (!IsSegmentHeap(segmentListEntry)) {
+                                break;
+                            }
+
+                            //Record Fisrt And End
+                            long firstHeapEntry = ReadPointer((ulong)segmentListEntry + 0x40);
+                            long lastHeapEntry = ReadPointer((ulong)segmentListEntry + 0x48);
+
+                            //If FirstHeapEntry Is Not Null
+                            if (firstHeapEntry != 0)
+                            {
+                                short firstHeapSize;
+                                try
+                                {
+                                    firstHeapSize = ReadMemory<short>((ulong)firstHeapEntry + 0x08);
+                                }
+                                catch (System.Exception e)
+                                {
+                                    //Can't Read Size
+                                    break;
+                                }
+
+                                while (firstHeapEntry <= lastHeapEntry)
+                                {
+                                    //Decrypt Size
+                                    int decryptSize = firstHeapSize ^ xorkey;
+
+                                    //If Size Is Zero
+                                    if (decryptSize == 0)
+                                    {
+                                        break;
+                                    }
+
+                                    //Get Unused Bytes
+                                    byte unusedByteCount = ReadMemory<byte>((ulong)firstHeapEntry + 0x0f);
+
+                                    //Get Next Entry
+                                    firstHeapEntry = firstHeapEntry + 0x10 * decryptSize;
+                                    heaps.Add(firstHeapEntry);
+                                    try
+                                    {
+                                        firstHeapSize = ReadMemory<short>((ulong)firstHeapEntry + 0x08);
+                                    }
+                                    catch (System.Exception e)
+                                    {
+                                        //Can't Read Address
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            segmentListEntry = ReadPointer((ulong)(segmentListEntry) + 0x10) - 0x10;
+                        }
+                        heaps.Add(segmentListEntry);
+                        if (segmentListEntry == segmentEnd)
+                        {
+                            break;
+                        }
+                    }
+                    heaps.Add(heap);
                 }
 
                 return heaps;
